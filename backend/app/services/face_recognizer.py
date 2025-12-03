@@ -2,32 +2,33 @@
 import torch
 import torch.nn as nn
 import cv2
+
+import os
 import numpy as np
 from typing import Dict, List, Optional
 import logging
-
+from torchvision.models import resnet50
 logger = logging.getLogger(__name__)
 
 
 class ArcFaceModel(nn.Module):
     
-    def __init__(self, embedding_size=512):
+    def __init__(self, embedding_size=128, num_classes=2):
         super(ArcFaceModel, self).__init__()
-        self.backbone = nn.Sequential(
-            nn.Conv2d(3, 64, 3, padding=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
-            nn.Linear(64, embedding_size)
-        )
-    
+        self.backbone = resnet50(weights='DEFAULT')
+        self.backbone.fc = nn.Linear(self.backbone.fc.in_features, embedding_size)
+        self.backbone_bn = nn.BatchNorm1d(embedding_size)
+        self.backbone_bn.bias.requires_grad_(False)
+
     def forward(self, x):
-        return self.backbone(x)
+        x = self.backbone(x)
+        x = self.backbone_bn(x)
+        return x
 
 
 class FaceRecognizer:
     
-    def __init__(self, model_path: str, embedding_size: int = 512):        
+    def __init__(self, model_path: str, embedding_size: int = 128):        
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.embedding_size = embedding_size
         
@@ -112,7 +113,7 @@ class FaceRecognizer:
         is_known = best_similarity >= threshold if best_match else False
         
         return {
-            'identity': best_match if is_known else 'unknown',
+            'identity': best_match if is_known else 'unknownk',
             'is_known': is_known,
             'confidence': float(best_similarity)
         }
@@ -134,3 +135,7 @@ class FaceRecognizer:
     def add_to_whitelist(self, identity: str, embedding: np.ndarray):
         self.whitelist[identity] = embedding
         logger.info(f"Added {identity} to whitelist")
+
+
+
+

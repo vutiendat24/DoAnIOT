@@ -13,6 +13,10 @@ from app.websocket.manager import ConnectionManager
 from app.utils.config import settings
 from app.utils.logger import setup_logging
 
+import cv2
+import numpy as np
+print(f"[DEBUG CONFIG FILE PATH] loaded from: {settings.__config__.env_file if hasattr(settings, '__config__') else 'no env file'}")
+print(f"[DEBUG CONFIG PATH] ARCFACE_MODEL_PATH = {settings.ARCFACE_MODEL_PATH}")
 setup_logging()
 logger = logging.getLogger(__name__)
 
@@ -22,7 +26,7 @@ ws_manager = ConnectionManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     
-    logger.info("🚀 Starting Smart Intrusion Detection Backend...")
+    logger.info(" Starting Smart Intrusion Detection Backend...")
     
     try:
         # Load YOLOv8 model
@@ -40,6 +44,13 @@ async def lifespan(app: FastAPI):
             face_recognizer = None
         else:
             face_recognizer = FaceRecognizer(settings.ARCFACE_MODEL_PATH)
+            dataset_path = "dataset" 
+            if os.path.exists(dataset_path):
+                logger.info(f"Creating whitelist from folder: {dataset_path}")
+                create_whitelist_from_folder(face_recognizer, dataset_path)
+                logger.info(f"Whitelist contains {len(face_recognizer.whitelist)} entries")
+            else:
+                logger.warning(f"Dataset folder not found: {dataset_path}")
             logger.info("ArcFace model loaded successfully!")
         
         logger.info("Initializing Firebase...")
@@ -59,9 +70,9 @@ async def lifespan(app: FastAPI):
         logger.info("All services initialized successfully!")
         
     except Exception as e:
-        logger.error(f"❌ Startup error: {str(e)}", exc_info=True)
-        logger.warning("⚠️  Server starting with limited functionality")
-        # Set None values for missing services
+        logger.error(f"Startup error: {str(e)}", exc_info=True)
+        logger.warning("Server starting with limited functionality")
+        
         app.state.yolo_detector = None
         app.state.face_recognizer = None
         app.state.firebase_service = None
@@ -69,19 +80,15 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # Cleanup
     logger.info("Shutting down services...")
 
 
-# Create FastAPI app
 app = FastAPI(
     title="Smart Intrusion Detection API",
-    description="Backend for ESP32-CAM intrusion detection with YOLOv8 and ArcFace",
     version="1.0.0",
     lifespan=lifespan
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -90,7 +97,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
 app.include_router(detect.router, prefix="/api", tags=["Detection"])
 app.include_router(roi.router, prefix="/api", tags=["ROI"])
 app.include_router(events.router, prefix="/api", tags=["Events"])
@@ -126,7 +132,6 @@ async def websocket_endpoint(websocket: WebSocket):
 if __name__ == "__main__":
     import uvicorn
     
-    # Create necessary directories
     os.makedirs("logs", exist_ok=True)
     os.makedirs("models", exist_ok=True)
     
@@ -136,3 +141,57 @@ if __name__ == "__main__":
         port=settings.PORT,
         reload=settings.DEBUG
     )
+
+
+
+
+
+def create_whitelist_from_folder(recognizer, dataset_path="dataset"):
+    for identity in os.listdir(dataset_path):
+        identity_path = os.path.join(dataset_path, identity)
+        if not os.path.isdir(identity_path):
+            continue
+        
+        embeddings = []
+        for img_file in os.listdir(identity_path):
+            if img_file.lower().endswith((".jpg", ".png", ".jpeg")):
+                img_path = os.path.join(identity_path, img_file)
+                img = cv2.imread(img_path)
+                
+                faces = recognizer.detect_faces(img)
+                if len(faces) == 0:
+                    print(f"[WARN] No face detected in {img_path}")
+                    continue
+                
+                # Dùng khuôn mặt lớn nhất
+                x, y, w, h = sorted(faces, key=lambda f: f[2]*f[3], reverse=True)[0]
+                face_roi = img[y:y+h, x:x+w]
+                
+                emb = recognizer.extract_embedding(face_roi)
+                embeddings.append(emb)
+        
+        if embeddings:
+            # trung bình các embeddings của một người
+            avg_emb = np.mean(embeddings, axis=0)
+            avg_emb = avg_emb / np.linalg.norm(avg_emb)
+            recognizer.whitelist[identity] = avg_emb
+            print(f"[INFO] Added {identity} to whitelist ({len(embeddings)} faces)")
+recognizer = FaceRecognizer("models/best_arcface_model.pth", embedding_size=128)
+create_whitelist_from_folder(recognizer, dataset_path="dataset")
+
+# Test nhận diện
+test_img = cv2.imread("./dataset/Dat/WIN_20251113_19_14_34_Pro.jpg")
+result = recognizer.recognize_face(test_img)
+print(result)
+
+
+
+
+
+
+
+
+
+
+
+

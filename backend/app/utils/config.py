@@ -6,7 +6,7 @@ import os
 
 class Settings(BaseSettings):
     """Application settings"""
-    
+
     # Firebase
     FIREBASE_CREDENTIALS: str = "serviceAccountKey.json"
     FIREBASE_STORAGE_BUCKET: str = "thef.appspot.com"
@@ -14,7 +14,7 @@ class Settings(BaseSettings):
    
     # AI Models
     YOLO_MODEL_PATH: str = "models/yolov8n.pt"
-    ARCFACE_MODEL_PATH: str = "models/arcface.pt"
+    ARCFACE_MODEL_PATH: str = "models/best_arcface_model.pth"
     
     # Server
     HOST: str = "0.0.0.0"
@@ -33,3 +33,4 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+print(">>> [DEBUG CONFIG PATHHHHHHHHH] ARCFACE_MODEL_PATH =", settings.ARCFACE_MODEL_PATH)

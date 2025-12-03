@@ -16,19 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 class FirebaseService:
-    """Firebase Admin SDK integration"""
     
     def __init__(self, credentials_path: str):
-        """
-        Initialize Firebase Admin SDK
         
-        Args:
-            credentials_path: Path to service account JSON
-        """
         try:
             cred = credentials.Certificate(credentials_path)
-            
-            # Initialize app if not already initialized
             if not firebase_admin._apps:
                 firebase_admin.initialize_app(cred, {
                     'storageBucket': 'thef-detect.appspot.com'
@@ -55,28 +47,20 @@ class FirebaseService:
                 resource_type="image"
             )
             url = result["secure_url"]
-            logger.info(f"Image uploaded to Cloudinary: {url}")
+            # logger.info(f"Image uploaded to Cloudinary: {url}")
             return url
         except Exception as e:
             logger.error(f"Cloudinary upload failed: {str(e)}")
             raise
     
     def save_event(self, event_data: Dict) -> str:
-        """
-        Save detection event to Firestore
-        
-        Args:
-            event_data: Event metadata
-            
-        Returns:
-            Document ID
-        """
+       
         try:
             doc_ref = self.db.collection('events').document()
             event_data['created_at'] = firestore.SERVER_TIMESTAMP
             doc_ref.set(event_data)
             
-            logger.info(f"Event saved: {doc_ref.id}")
+            # logger.info(f"Event saved: {doc_ref.id}")
             return doc_ref.id
         except Exception as e:
             logger.error(f"Event save failed: {str(e)}")
@@ -85,20 +69,10 @@ class FirebaseService:
     def get_events(
         self,
         user_id: str,
-        limit: int = 50,
+        limit: int = 50, #so luong su kien tra ve 
         alert_only: bool = False
     ) -> List[Dict]:
-        """
-        Retrieve events from Firestore
-        
-        Args:
-            user_id: User ID filter
-            limit: Maximum number of events
-            alert_only: Filter for alerts only
-            
-        Returns:
-            List of event documents
-        """
+       
         try:
             query = self.db.collection('events').where('user_id', '==', user_id)
             
@@ -119,7 +93,7 @@ class FirebaseService:
             return []
     
     def get_event_by_id(self, event_id: str, user_id: str) -> Optional[Dict]:
-        """Get specific event by ID"""
+        
         try:
             doc = self.db.collection('events').document(event_id).get()
             
@@ -137,7 +111,7 @@ class FirebaseService:
             return None
     
     def save_roi(self, roi_data: Dict) -> str:
-        """Save ROI configuration"""
+    
         try:
             doc_ref = self.db.collection('rois').document()
             roi_data['created_at'] = firestore.SERVER_TIMESTAMP
@@ -150,7 +124,6 @@ class FirebaseService:
             raise
     
     def get_user_rois(self, user_id: str) -> List[Dict]:
-        """Get all ROIs for user"""
         try:
             query = self.db.collection('rois').where('user_id', '==', user_id)
             
@@ -166,7 +139,6 @@ class FirebaseService:
             return []
     
     def delete_roi(self, roi_id: str, user_id: str):
-        """Delete ROI configuration"""
         try:
             doc_ref = self.db.collection('rois').document(roi_id)
             doc = doc_ref.get()
@@ -181,15 +153,7 @@ class FirebaseService:
             raise
     
     def verify_token(self, id_token: str) -> Dict:
-        """
-        Verify Firebase Auth token
         
-        Args:
-            id_token: Firebase ID token
-            
-        Returns:
-            Decoded token with user info
-        """
         try:
             decoded_token = auth.verify_id_token(id_token)
             return decoded_token
@@ -214,7 +178,6 @@ class FirebaseService:
             return []
     
     def add_to_whitelist(self, identity: str, embedding: List[float]) -> str:
-        """Add face to whitelist"""
         try:
             doc_ref = self.db.collection('whitelist').document()
             doc_ref.set({

@@ -9,12 +9,11 @@ logger = logging.getLogger(__name__)
 
 
 class YoloDetector:
-    """YOLOv8-based person detection"""
     
     def __init__(self, model_path: str):
        
         self.model = YOLO(model_path)
-        self.person_class_id = 0  # COCO class ID for 'person'
+        self.person_class_id = 0  
         logger.info(f"YOLOv8 model loaded from {model_path}")
     
     def detect_persons(

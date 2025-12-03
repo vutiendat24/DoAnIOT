@@ -7,7 +7,7 @@ import cv2
 import base64
 import logging
 from typing import List
-
+import os 
 from app.models.detection_result import DetectionResponse, Detection
 from app.services.vision_utils import VisionPreprocessor
 from app.utils.auth import verify_token
@@ -24,7 +24,6 @@ async def detect_intrusion(
 ):
    
     try:
-        # Read and decode image
         contents = await file.read()
         nparr = np.frombuffer(contents, np.uint8)
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -32,7 +31,7 @@ async def detect_intrusion(
         if image is None:
             raise HTTPException(status_code=400, detail="Invalid image format")
         
-        logger.info(f"Received image: {image.shape}")
+        # logger.info(f"Received image: {image.shape}")
         
         # Get services from app state
         yolo_detector = request.app.state.yolo_detector
@@ -42,23 +41,22 @@ async def detect_intrusion(
         
         # Check if YOLO detector is available
         if yolo_detector is None:
-            logger.error("YOLOv8 model not loaded!")
+            # logger.error("YOLOv8 model not loaded!")
             raise HTTPException(
                 status_code=503, 
-                detail="YOLOv8 model not available. Please download model: wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt and place in models/ directory"
+                detail="YOLOv8 model not available."
             )
         
-        # Preprocess image (enhance for night vision if needed)
+        # tang do tang phan cua anh neu anh duoc chup vao buoi toi 
         preprocessor = VisionPreprocessor()
         enhanced_image = preprocessor.enhance_for_night(image)
         
-        # Run YOLOv8 detection
         person_detections = yolo_detector.detect_persons(enhanced_image)
         
         detections: List[Detection] = []
         alert_triggered = False
         
-        # Process each detected person
+        
         for det in person_detections:
             bbox = det['bbox']
             confidence = det['confidence']
@@ -68,21 +66,20 @@ async def detect_intrusion(
             
             # Validate bbox
             if x2 <= x1 or y2 <= y1:
-                logger.warning(f"Invalid bbox: {bbox}")
                 continue
                 
             person_roi = enhanced_image[y1:y2, x1:x2]
             
-            # Run face recognition if available
-            if face_recognizer is not None and person_roi.size > 0:
+            # # Run face recognition if available
+            if face_recognizer is not None and person_roi.size > 0:        
                 face_result = face_recognizer.recognize_face(person_roi)
-                face_id = face_result.get('identity', 'unknown')
+                face_id = face_result.get('identity', 'unknow')
                 is_known = face_result.get('is_known', False)
             else:
-                # Mock face recognition if not available
-                face_id = 'mock_person'
+                
+                face_id = 'unknown'
                 is_known = False
-                logger.warning("Face recognition not available, using mock data")
+                # logger.warning("Face recognition not available")
             
             # Trigger alert if unknown person detected
             if not is_known:
@@ -99,30 +96,19 @@ async def detect_intrusion(
             # Vẽ kết quả detection
             annotated_image = draw_detections(image, [det.dict() for det in detections])
 
-            # _, buffer = cv2.imencode('.jpg', annotated_image)
-            # annotated_img = base64.b64encode(buffer).decode('utf-8')
-
         
         # Save to Firebase if available and detections found
         image_url = None
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now().isoformat()
         
         if detections and firebase_service is not None:
             try:
                 # Upload image to Firebase Storage
                 image_filename = f"detections/{user_id}/{timestamp}.jpg"
                 
-                # Encode image back to bytes
 
                 #  thu luu anh da duoc danh dau (annotation)
-                #  thu luu anh da duoc danh dau (annotation)
-                #  thu luu anh da duoc danh dau (annotation)
 
-
-
-
-
-                # _, buffer = cv2.imencode('.jpg', image)
                 _, buffer = cv2.imencode('.jpg', annotated_image)
                 image_bytes = buffer.tobytes()
                 
@@ -141,14 +127,14 @@ async def detect_intrusion(
                 }
                 firebase_service.save_event(event_data)
                 
-                logger.info(f"Event saved to Firebase: {len(detections)} detection(s)")
+                # logger.info(f"Event saved to Firebase: {len(detections)} detection(s)")
                 
             except Exception as firebase_error:
                 logger.error(f"Firebase error: {str(firebase_error)}")
-                logger.warning("Continuing without Firebase storage")
+                # logger.warning("Continuing without Firebase storage")
         else:
-            if firebase_service is None:
-                logger.warning("Firebase not available, skipping storage")
+            # if firebase_service is None:
+            #     logger.warning("Firebase not available, skipping storage")
             # Generate mock image URL for testing
             image_url = f"https://placeholder.example.com/detection_{timestamp}.jpg"
         
@@ -167,7 +153,6 @@ async def detect_intrusion(
                 })
             except Exception as ws_error:
                 logger.error(f"WebSocket broadcast error: {str(ws_error)}")
-        
         response = DetectionResponse(
             detections=detections,
             image_url=image_url,
@@ -175,8 +160,7 @@ async def detect_intrusion(
             alert=alert_triggered
         )
         
-        logger.info(f"Detection complete: {len(detections)} person(s) found, alert={alert_triggered}")
-        
+        # logger.info(f"Detection complete: {len(detections)} person(s) found, alert={alert_triggered}")
         return response
         
     except HTTPException:
@@ -199,3 +183,16 @@ def draw_detections(image, detections):
         cv2.putText(annotated, label, (x1, y1 - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
     return annotated
+
+
+
+
+
+
+
+
+
+
+
+
+

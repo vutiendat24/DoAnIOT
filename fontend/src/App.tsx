@@ -173,29 +173,71 @@ const App = () => {
     }
   }
 
-  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) return
+  // const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  //   const file = event.target.files?.[0]
+  //   if (!file) return
 
-    const formData = new FormData()
-    formData.append("file", file)
+  //   const formData = new FormData()
+  //   formData.append("file", file)
 
-    try {
-      setLoading(true)
-      const data = await apiCall("/detect", {
-        method: "POST",
-        body: formData,
-      })
+  //   try {
+  //     setLoading(true)
+  //     const data = await apiCall("/detect", {
+  //       method: "POST",
+  //       body: formData,
+  //     })
 
-      alert(`Detection complete! Found ${data.detections.length} person(s)`)
-      fetchEvents()
-    } catch (error) {
-      console.error("Detection failed:", error)
-      alert("Detection failed: " + (error as Error).message)
-    } finally {
-      setLoading(false)
+  //     alert(`Detection complete! Found ${data.detections.length} person(s)`)
+  //     fetchEvents()
+  //   } catch (error) {
+  //     console.error("Detection failed:", error)
+  //     alert("Detection failed: " + (error as Error).message)
+  //   } finally {
+  //     setLoading(false)
+  //   }
+  // }
+const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  console.log("Uploading file:", {
+    name: file.name,
+    type: file.type,
+    size: file.size,
+  });
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    setLoading(true);
+
+    // Gọi API detect mà KHÔNG set Content-Type
+    const data = await apiCall("/detect", {
+      method: "POST",
+      body: formData,
+      headers: { Authorization: `Bearer ${MOCK_TOKEN}` }, 
+    });
+
+    console.log("Server response:", data);
+
+    if (data.detections?.length >= 0) {
+      alert(`Tìm thấy ${data.detections.length} người`);
+    } else {
+      alert("Detection returned no data");
     }
+
+    // Cập nhật danh sách sự kiện
+    fetchEvents();
+  } catch (error) {
+    console.error("Detection failed:", error);
+    alert("Detection failed: " + (error as Error).message);
+  } finally {
+    setLoading(false);
+    // Reset input để có thể upload lại cùng file nếu muốn
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
+};
 
   const handleCreateROI = async () => {
     const roiData = {
@@ -334,10 +376,10 @@ const App = () => {
                         className={`w-3 h-3 rounded-full ${det.alert ? "bg-red-500 animate-pulse" : "bg-green-500"}`}
                       ></div>
                       <span className="text-white font-medium">
-                        {det.alert ? "⚠️ Unknown Person" : "✅ Known Person"}
+                        {det.alert ? "⚠️ Người lạ" : "✅ Người quen"}
                       </span>
                     </div>
-                    <span className="text-slate-400 text-sm">Confidence: {(det.confidence * 100).toFixed(1)}%</span>
+                    <span className="text-slate-400 text-sm">Độ chính xác: {(det.confidence * 100).toFixed(1)}%</span>
                   </div>
                 ))}
               </div>
@@ -371,13 +413,13 @@ const App = () => {
                   >
                     <div className="flex justify-between items-start mb-1">
                       <p className={`font-semibold text-sm ${detection.alert ? "text-red-400" : "text-green-400"}`}>
-                        {detection.alert ? "⚠️ Alert" : "✅ Known"}
+                        {detection.alert ? "⚠️ Cảnh báo" : "✅ Bình thường"}
                       </p>
                       <span className="text-xs text-slate-400">
                         {new Date(detection.timestamp).toLocaleTimeString()}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-400">{detection.detections?.length || 0} person(s)</p>
+                    <p className="text-xs text-slate-400">{detection.detections?.length || 0} người</p>
                   </div>
                 ))}
               </div>
@@ -778,7 +820,7 @@ const EventCard = ({ event, onViewImage, onDownload }: any) => (
           ) : (
             <CheckCircle className="w-5 h-5 text-green-500" />
           )}
-          <h3 className="font-bold text-white">{event.alert ? "Unknown Person" : "Known Person"}</h3>
+          <h3 className="font-bold text-white">{event.alert ? "Người lạ" : "Người Quen"}</h3>
         </div>
       </div>
       <div className="space-y-2 text-sm text-slate-400 mb-3">
@@ -827,8 +869,8 @@ const NotificationToast = ({ notification, onClose, onView }: any) => (
             </div>
           )}
           <div>
-            <p className={`font-bold text-sm ${notification.alert ? "text-red-400" : "text-green-400"}`}>
-              {notification.alert ? "⚠️ Intrusion Alert!" : "✅ Person Detected"}
+            <p className={`font-bold text-sm ${notification.alert ? "text-red-400!" : "text-green-400!"}`}>
+              {notification.alert ? "⚠️ Cảnh báo có người đột nhập!" : " Phát hiện có người"}
             </p>
             <p className="text-xs text-slate-400">{new Date(notification.timestamp).toLocaleTimeString()}</p>
           </div>
@@ -847,12 +889,12 @@ const NotificationToast = ({ notification, onClose, onView }: any) => (
         />
       )}
 
-      <p className="text-sm text-slate-400 mb-3">{notification.detections?.length || 0} person(s) detected</p>
+      <p className="text-sm text-slate-400! mb-3">{notification.detections?.length || 0} người được phát hiện</p>
 
       <button
         onClick={onView}
         className={`w-full py-2 rounded-lg font-medium text-sm transition-colors ${
-          notification.alert ? "bg-red-600! hover:bg-red-700! text-white" : "bg-green-600 hover:bg-green-700 text-white"
+          notification.alert ? "bg-red-600! hover:bg-red-700! text-white" : "bg-green-600! hover:bg-green-700! text-white"
         }`}
       >
         View Details
@@ -874,13 +916,13 @@ const ImageModal = ({ imageUrl, onClose, onDownload }: any) => (
           <div className="flex gap-2">
             <button
               onClick={onDownload}
-              className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-lg transition-colors"
+              className="bg-blue-600! hover:bg-blue-700! text-white p-2 rounded-lg transition-colors"
             >
               <Download className="w-5 h-5" />
             </button>
             <button
               onClick={onClose}
-              className="bg-slate-700 hover:bg-slate-600 text-white p-2 rounded-lg transition-colors"
+              className="bg-slate-700! hover:bg-slate-600! text-white p-2 rounded-lg transition-colors"
             >
               <X className="w-5 h-5" />
             </button>

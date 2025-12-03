@@ -35,8 +35,6 @@ wheels/
 *~
 
 # Models
-models/*.pt
-models/*.pth
 !models/.gitkeep
 
 # Firebase
