@@ -4,6 +4,7 @@ from fastapi import WebSocket
 from typing import List
 import json
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +28,20 @@ class ConnectionManager:
         await websocket.send_text(json.dumps(message))
     
     async def broadcast(self, message: dict):
-        disconnected = []
-        
-        for connection in self.active_connections:
+        # Send to all clients concurrently to reduce latency
+        coros = []
+        for connection in list(self.active_connections):
+            coros.append(self._safe_send(connection, message))
+
+        await asyncio.gather(*coros, return_exceptions=True)
+
+    async def _safe_send(self, connection, message: dict):
+        try:
+            await connection.send_text(json.dumps(message))
+        except Exception as e:
+            logger.error(f"Failed to send to client: {str(e)}")
+            # remove disconnected connection
             try:
-                await connection.send_text(json.dumps(message))
-            except Exception as e:
-                logger.error(f"Failed to send to client: {str(e)}")
-                disconnected.append(connection)
-        
-        # Remove disconnected clients
-        for connection in disconnected:
-            self.disconnect(connection)
+                self.disconnect(connection)
+            except Exception:
+                pass

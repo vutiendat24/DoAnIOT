@@ -176,13 +176,8 @@ def create_whitelist_from_folder(recognizer, dataset_path="dataset"):
             avg_emb = avg_emb / np.linalg.norm(avg_emb)
             recognizer.whitelist[identity] = avg_emb
             print(f"[INFO] Added {identity} to whitelist ({len(embeddings)} faces)")
-recognizer = FaceRecognizer("models/best_arcface_model.pth", embedding_size=128)
-create_whitelist_from_folder(recognizer, dataset_path="dataset")
 
-# Test nhận diện
-test_img = cv2.imread("./dataset/Dat/WIN_20251113_19_14_34_Pro.jpg")
-result = recognizer.recognize_face(test_img)
-print(result)
+
 
 
 

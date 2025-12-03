@@ -3,10 +3,13 @@
 from fastapi import APIRouter, File, UploadFile, Request, HTTPException, Depends
 from datetime import datetime
 import numpy as np
+from time import time
+
 import cv2
 import base64
 import logging
-from typing import List
+from typing import List, Optional
+import asyncio
 import os 
 from app.models.detection_result import DetectionResponse, Detection
 from app.services.vision_utils import VisionPreprocessor
@@ -14,131 +17,149 @@ from app.utils.auth import verify_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
+    
 @router.post("/detect", response_model=DetectionResponse)
 async def detect_intrusion(
     request: Request,
     file: UploadFile = File(...),
     user_id: str = Depends(verify_token)
 ):
-   
     try:
+        begin = time()  # ---- START ----
+
+        # Read file
         contents = await file.read()
+
+        # Decode image
         nparr = np.frombuffer(contents, np.uint8)
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
+        time_count_image = time()
+
         if image is None:
             raise HTTPException(status_code=400, detail="Invalid image format")
         
-        # logger.info(f"Received image: {image.shape}")
-        
-        # Get services from app state
+        # Setup service
+        time_count_setup_begin = time()
         yolo_detector = request.app.state.yolo_detector
         face_recognizer = request.app.state.face_recognizer
         firebase_service = request.app.state.firebase_service
         ws_manager = request.app.state.ws_manager
+        time_count_setup_end = time()
         
-        # Check if YOLO detector is available
         if yolo_detector is None:
-            # logger.error("YOLOv8 model not loaded!")
             raise HTTPException(
                 status_code=503, 
                 detail="YOLOv8 model not available."
             )
         
-        # tang do tang phan cua anh neu anh duoc chup vao buoi toi 
+        # Enhance image
+        time_enhance_begin = time()
         preprocessor = VisionPreprocessor()
         enhanced_image = preprocessor.enhance_for_night(image)
-        
+        time_enhance_end = time()
+        # --- YOLO detection ---
+        time_before_yolo = time()
         person_detections = yolo_detector.detect_persons(enhanced_image)
-        
+        time_after_yolo = time()
+
         detections: List[Detection] = []
         alert_triggered = False
         
-        
+        # --- Face recognition ---
+        time_before_face = time()
         for det in person_detections:
             bbox = det['bbox']
             confidence = det['confidence']
             
-            # Extract person ROI for face recognition
             x1, y1, x2, y2 = map(int, bbox)
-            
-            # Validate bbox
             if x2 <= x1 or y2 <= y1:
                 continue
                 
             person_roi = enhanced_image[y1:y2, x1:x2]
             
-            # # Run face recognition if available
-            if face_recognizer is not None and person_roi.size > 0:        
+            if face_recognizer is not None and person_roi.size > 0:
                 face_result = face_recognizer.recognize_face(person_roi)
-                face_id = face_result.get('identity', 'unknow')
+                face_id = face_result.get('identity', 'unknown')
                 is_known = face_result.get('is_known', False)
             else:
-                
                 face_id = 'unknown'
                 is_known = False
-                # logger.warning("Face recognition not available")
             
-            # Trigger alert if unknown person detected
             if not is_known:
                 alert_triggered = True
             
-            detection = Detection(
+            detections.append(Detection(
                 label="person",
                 confidence=confidence,
                 bbox=bbox,
                 face_id=face_id,
                 alert=not is_known
-            )
-            detections.append(detection)
-            # Vẽ kết quả detection
-            annotated_image = draw_detections(image, [det.dict() for det in detections])
+            ))
+        
+        time_after_face = time()
 
-        
-        # Save to Firebase if available and detections found
-        image_url = None
+        # Drawing
+        annotated_image = draw_detections(image, [det.dict() for det in detections])
+
+        # Firebase upload (offloaded to background to reduce API latency)
+        image_url: Optional[str] = None
         timestamp = datetime.now().isoformat()
-        
+
+        time_before_firebase = time()
+
+        async def _upload_and_save(image_to_upload: bytes, filename: str, event_payload: dict):
+            try:
+                # Run blocking uploads in threadpool
+                url = await asyncio.to_thread(firebase_service.upload_image, image_to_upload, filename)
+                event_payload['image_url'] = url
+                await asyncio.to_thread(firebase_service.save_event, event_payload)
+                logger.info(f"Background Firebase work completed: {filename}")
+            except Exception as e:
+                logger.error(f"Background Firebase error: {str(e)}")
+
         if detections and firebase_service is not None:
             try:
-                # Upload image to Firebase Storage
                 image_filename = f"detections/{user_id}/{timestamp}.jpg"
-                
 
-                #  thu luu anh da duoc danh dau (annotation)
+                # Compress/rescale image before upload to reduce size (speeds up network transfer)
+                # keep aspect ratio, limit max dimension to 1280
+                h, w = annotated_image.shape[:2]
+                max_dim = 1280
+                if max(h, w) > max_dim:
+                    scale = max_dim / max(h, w)
+                    new_w = int(w * scale)
+                    new_h = int(h * scale)
+                    upload_image = cv2.resize(annotated_image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                else:
+                    upload_image = annotated_image
 
-                _, buffer = cv2.imencode('.jpg', annotated_image)
+                # Encode with reasonable JPEG quality to shrink size
+                encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+                _, buffer = cv2.imencode('.jpg', upload_image, encode_params)
                 image_bytes = buffer.tobytes()
-                
-                image_url = firebase_service.upload_image(
-                    image_bytes,
-                    image_filename
-                )
-                
-                # Save event to Firestore
+
                 event_data = {
                     "user_id": user_id,
                     "timestamp": timestamp,
                     "detections": [det.dict() for det in detections],
-                    "image_url": image_url,
+                    "image_url": None,
                     "alert": alert_triggered
                 }
-                firebase_service.save_event(event_data)
-                
-                # logger.info(f"Event saved to Firebase: {len(detections)} detection(s)")
-                
+
+                # Fire-and-forget background upload/save so API response is fast.
+                # We still return a placeholder URL so client has a value quickly.
+                asyncio.create_task(_upload_and_save(image_bytes, image_filename, event_data))
+                image_url = f"https://placeholder.example.com/detection_{timestamp}.jpg"
+
             except Exception as firebase_error:
-                logger.error(f"Firebase error: {str(firebase_error)}")
-                # logger.warning("Continuing without Firebase storage")
+                logger.error(f"Firebase error (scheduling): {str(firebase_error)}")
+                image_url = f"https://placeholder.example.com/detection_{timestamp}.jpg"
         else:
-            # if firebase_service is None:
-            #     logger.warning("Firebase not available, skipping storage")
-            # Generate mock image URL for testing
             image_url = f"https://placeholder.example.com/detection_{timestamp}.jpg"
-        
-        # Broadcast to WebSocket clients
+
+        time_after_firebase = time()
+        time_web_socket_begin = time()
+        # --- WebSocket Broadcast ---
         if ws_manager and detections:
             try:
                 await ws_manager.broadcast({
@@ -153,15 +174,27 @@ async def detect_intrusion(
                 })
             except Exception as ws_error:
                 logger.error(f"WebSocket broadcast error: {str(ws_error)}")
-        response = DetectionResponse(
+        time_web_socket_end = time()
+
+        # ---- LOG PERFORMANCE ----
+        time_end = time()
+        logger.info({
+            "time_total": time_end - begin,
+            "time_decode_image": time_count_image - begin,
+            "time_service_setup": time_count_setup_end - time_count_setup_begin,
+            "time_enhance": time_enhance_end - time_enhance_begin,
+            "time_yolo": time_after_yolo - time_before_yolo,
+            "time_face_recognition": time_after_face - time_before_face,
+            "time_firebase": time_after_firebase - time_before_firebase if detections else 0,
+            "time_web_socket" : time_web_socket_end - time_web_socket_begin
+        })
+
+        return DetectionResponse(
             detections=detections,
             image_url=image_url,
             timestamp=timestamp,
             alert=alert_triggered
         )
-        
-        # logger.info(f"Detection complete: {len(detections)} person(s) found, alert={alert_triggered}")
-        return response
         
     except HTTPException:
         raise
@@ -171,7 +204,6 @@ async def detect_intrusion(
             status_code=500, 
             detail=f"Detection failed: {str(e)}"
         )
-    
 
 def draw_detections(image, detections):
     annotated = image.copy()

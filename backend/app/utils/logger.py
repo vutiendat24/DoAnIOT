@@ -20,6 +20,8 @@ def setup_logging(level=logging.INFO):
     file_handler.setFormatter(formatter)
     
     root_logger = logging.getLogger()
+    if root_logger.hasHandlers():
+        root_logger.handlers.clear() 
     root_logger.setLevel(level)
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
