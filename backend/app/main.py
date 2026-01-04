@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import logging
 import os
 
-from app.routes import detect, roi, events
+from app.routes import detect, roi, events, door
 from app.services.yolo_detector import YoloDetector
 from app.services.face_recognizer import FaceRecognizer
 from app.services.firebase_service import FirebaseService
@@ -100,6 +100,7 @@ app.add_middleware(
 app.include_router(detect.router, prefix="/api", tags=["Detection"])
 app.include_router(roi.router, prefix="/api", tags=["ROI"])
 app.include_router(events.router, prefix="/api", tags=["Events"])
+app.include_router(door.router, prefix="/api", tags=["Door Control"])
 
 
 @app.get("/")
@@ -118,7 +119,6 @@ async def root():
 
 @app.websocket("/ws/detections")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time detection streaming"""
     await app.state.ws_manager.connect(websocket)
     try:
         while True:
@@ -164,9 +164,18 @@ def create_whitelist_from_folder(recognizer, dataset_path="dataset"):
                     continue
                 
                 # Dùng khuôn mặt lớn nhất
-                x, y, w, h = sorted(faces, key=lambda f: f[2]*f[3], reverse=True)[0]
-                face_roi = img[y:y+h, x:x+w]
-                
+                x, y, w, h = sorted(faces, key=lambda f: f[2]*f[3], reverse=True)[0] #lấy tọa độ của mặt lớn nhất 
+
+                h_img, w_img = img.shape[:2]
+                margin = 0.3  # tang kich thuoc 30% mỗi chiều 
+                pad_w = int(w * margin)
+                pad_h = int(h * margin)
+                x = max(0, x)
+                y = max(0, y)
+                x2 = min(w_img, x + w + pad_w)
+                y2 = min(h_img, y + h + pad_h)
+
+                face_roi = img[y:y2, x:x2]
                 emb = recognizer.extract_embedding(face_roi)
                 embeddings.append(emb)
         

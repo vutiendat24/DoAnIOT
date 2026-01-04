@@ -65,7 +65,7 @@ class FaceRecognizer:
     def extract_embedding(self, face_image: np.ndarray) -> np.ndarray:
       
         # Preprocess
-        face_resized = cv2.resize(face_image, (112, 112))
+        face_resized = cv2.resize(face_image, (224, 224))
         face_rgb = cv2.cvtColor(face_resized, cv2.COLOR_BGR2RGB)
         face_tensor = torch.from_numpy(face_rgb).permute(2, 0, 1).float() / 255.0
         face_tensor = face_tensor.unsqueeze(0).to(self.device)
@@ -85,7 +85,7 @@ class FaceRecognizer:
     ) -> Dict:
        
         faces = self.detect_faces(person_image)
-        
+        save_faces(person_image, faces)
         if len(faces) == 0:
             return {
                 'identity': 'no_face',
@@ -136,6 +136,26 @@ class FaceRecognizer:
         self.whitelist[identity] = embedding
         logger.info(f"Added {identity} to whitelist")
 
+import os
+from datetime import datetime
+
+def save_faces(
+    image: np.ndarray,
+    faces,
+    save_dir="saved_faces"
+):
+    os.makedirs(save_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+    for i, (x, y, w, h) in enumerate(faces):
+        face_roi = image[y:y+h, x:x+w]
+
+        if face_roi.size == 0:
+            continue
+
+        filename = f"face_{timestamp}_{i}.jpg"
+        cv2.imwrite(os.path.join(save_dir, filename), face_roi)
 
 
 

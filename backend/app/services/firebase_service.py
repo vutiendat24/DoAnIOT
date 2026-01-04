@@ -1,6 +1,6 @@
 
 import firebase_admin
-from firebase_admin import credentials, firestore, storage, auth
+from firebase_admin import credentials, firestore, storage, auth, db as realtime_db
 from typing import Dict, List, Optional
 import logging
 from datetime import datetime
@@ -23,17 +23,19 @@ class FirebaseService:
             cred = credentials.Certificate(credentials_path)
             if not firebase_admin._apps:
                 firebase_admin.initialize_app(cred, {
-                    'storageBucket': 'thef-detect.appspot.com'
+                    'storageBucket': 'thef-detect.appspot.com',
+                    'databaseURL': 'https://thef-detect-default-rtdb.asia-southeast1.firebasedatabase.app'
                 })
             
             self.db = firestore.client()
             self.bucket = storage.bucket()
+            self.rtdb = realtime_db  # Firebase Realtime Database
             cloudinary.config(
                 cloud_name=os.getenv("CLOUD_NAME"),
                 api_key=os.getenv("CLOUD_API_KEY"),
                 api_secret=os.getenv("CLOUD_API_SECRET")
             )
-            logger.info("Firebase initialized successfully")
+            logger.info("Firebase initialized successfully (Firestore + Realtime Database)")
         except Exception as e:
             logger.error(f"Firebase initialization failed: {str(e)}")
             raise
@@ -69,15 +71,16 @@ class FirebaseService:
     def get_events(
         self,
         user_id: str,
-        limit: int = 50, #so luong su kien tra ve 
+        limit: int = 50, 
         alert_only: bool = False
     ) -> List[Dict]:
        
         try:
             query = self.db.collection('events').where('user_id', '==', user_id)
             
-            if alert_only:
-                query = query.where('alert', '==', True)
+            # if alert_only:
+            #     query = query.where('alert', '==', True)
+
             
             query = query.order_by('created_at', direction=firestore.Query.DESCENDING).limit(limit)
             
@@ -190,4 +193,39 @@ class FirebaseService:
             return doc_ref.id
         except Exception as e:
             logger.error(f"Whitelist addition failed: {str(e)}")
+            raise
+    
+    def send_door_command(self, user_id: str, action: str, timestamp: str) -> str:
+        """
+        Gửi lệnh điều khiển cửa lên Firebase.
+        - Ghi vào Firestore để lưu lịch sử
+        - Ghi vào Realtime Database để ESP32 lắng nghe real-time
+        """
+        try:
+            # 1. Lưu vào Firestore (lịch sử)
+            doc_ref = self.db.collection('door_commands').document()
+            command_data = {
+                'user_id': user_id,
+                'action': action,
+                'timestamp': timestamp,
+                'executed': False,
+                'created_at': firestore.SERVER_TIMESTAMP
+            }
+            doc_ref.set(command_data)
+            command_id = doc_ref.id
+            
+            # 2. Ghi vào Realtime Database để ESP32 lắng nghe real-time
+            rtdb_data = {
+                'command_id': command_id,
+                'user_id': user_id,
+                'action': action,
+                'timestamp': timestamp,
+                'executed': False
+            }
+            self.rtdb.reference('door_command').set(rtdb_data)
+            
+            logger.info(f"Door command sent to Firestore + RTDB: {command_id} - {action}")
+            return command_id
+        except Exception as e:
+            logger.error(f"Door command failed: {str(e)}")
             raise

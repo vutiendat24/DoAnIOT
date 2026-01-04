@@ -2,10 +2,10 @@ import cv2
 import requests
 import time
 from datetime import datetime
-LOCAL_IP= "192.168.1.54"
+LOCAL_IP= "192.168.1.136"
 API_URL = f'http://{LOCAL_IP}:8000/api/detect' 
 TOKEN = "test_token"                
-INTERVAL = 1                          
+INTERVAL = 10                          
 
 cap = cv2.VideoCapture(0) 
 

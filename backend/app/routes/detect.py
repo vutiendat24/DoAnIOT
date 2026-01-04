@@ -18,6 +18,8 @@ from app.utils.auth import verify_token
 logger = logging.getLogger(__name__)
 router = APIRouter()
     
+# @router.post("/detect", response_model=DetectionResponse)
+
 @router.post("/detect", response_model=DetectionResponse)
 async def detect_intrusion(
     request: Request,
@@ -107,22 +109,9 @@ async def detect_intrusion(
 
         time_before_firebase = time()
 
-        async def _upload_and_save(image_to_upload: bytes, filename: str, event_payload: dict):
-            try:
-                # Run blocking uploads in threadpool
-                url = await asyncio.to_thread(firebase_service.upload_image, image_to_upload, filename)
-                event_payload['image_url'] = url
-                await asyncio.to_thread(firebase_service.save_event, event_payload)
-                logger.info(f"Background Firebase work completed: {filename}")
-            except Exception as e:
-                logger.error(f"Background Firebase error: {str(e)}")
-
         if detections and firebase_service is not None:
             try:
                 image_filename = f"detections/{user_id}/{timestamp}.jpg"
-
-                # Compress/rescale image before upload to reduce size (speeds up network transfer)
-                # keep aspect ratio, limit max dimension to 1280
                 h, w = annotated_image.shape[:2]
                 max_dim = 1280
                 if max(h, w) > max_dim:
@@ -138,24 +127,31 @@ async def detect_intrusion(
                 _, buffer = cv2.imencode('.jpg', upload_image, encode_params)
                 image_bytes = buffer.tobytes()
 
+                # Upload image and get real URL (wait for completion)
+                image_url = await asyncio.to_thread(firebase_service.upload_image, image_bytes, image_filename)
+
+                raw_img =  image.copy()
+                
+                await asyncio.to_thread(encode_and_upload_image,firebase_service, raw_img, f"img_api/{timestamp}.jpg")
+                await asyncio.to_thread(encode_and_upload_image,firebase_service, enhanced_image, f"enhanced_image/{timestamp}.jpg")
+                # asyncio.to_thread(firebase_service.upload_image, image_bytes, image_filename)
+
+                # Save event to Firestore
                 event_data = {
                     "user_id": user_id,
                     "timestamp": timestamp,
                     "detections": [det.dict() for det in detections],
-                    "image_url": None,
+                    "image_url": image_url,
                     "alert": alert_triggered
                 }
-
-                # Fire-and-forget background upload/save so API response is fast.
-                # We still return a placeholder URL so client has a value quickly.
-                asyncio.create_task(_upload_and_save(image_bytes, image_filename, event_data))
-                image_url = f"https://placeholder.example.com/detection_{timestamp}.jpg"
+                await asyncio.to_thread(firebase_service.save_event, event_data)
+                logger.info(f"Firebase upload completed: {image_filename}")
 
             except Exception as firebase_error:
-                logger.error(f"Firebase error (scheduling): {str(firebase_error)}")
-                image_url = f"https://placeholder.example.com/detection_{timestamp}.jpg"
+                logger.error(f"Firebase error: {str(firebase_error)}")
+                image_url = None
         else:
-            image_url = f"https://placeholder.example.com/detection_{timestamp}.jpg"
+            image_url = None
 
         time_after_firebase = time()
         time_web_socket_begin = time()
@@ -169,7 +165,8 @@ async def detect_intrusion(
                         "timestamp": timestamp,
                         "detections": [det.dict() for det in detections],
                         "image_url": image_url,
-                        "alert": alert_triggered
+                        "alert": alert_triggered,
+                        "open": True
                     }
                 })
             except Exception as ws_error:
@@ -216,6 +213,34 @@ def draw_detections(image, detections):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
     return annotated
 
+def encode_and_upload_image(
+    firebase_service,
+    image: np.ndarray,
+    path: str,
+    quality: int = 80,
+    max_dim: int = 1280
+) -> Optional[str]:
+    try:
+        h, w = image.shape[:2]
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            image = cv2.resize(
+                image,
+                (int(w * scale), int(h * scale)),
+                interpolation=cv2.INTER_AREA
+            )
+
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+        success, buffer = cv2.imencode(".jpg", image, encode_params)
+        if not success:
+            return None
+
+        image_bytes = buffer.tobytes()
+        return firebase_service.upload_image(image_bytes, path)
+
+    except Exception as e:
+        logger.error(f"Upload image failed {path}: {str(e)}")
+        return None
 
 
 

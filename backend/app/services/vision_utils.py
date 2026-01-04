@@ -23,6 +23,7 @@ class VisionPreprocessor:
         
         # Ngưỡng: < 80 là tối 
         if mean_brightness < 80:  
+            print("ap dung them tang cuong sang")
             # --- Bước 1: CLAHE (Cân bằng sáng cục bộ) ---
             lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
             l, a, b = cv2.split(lab)

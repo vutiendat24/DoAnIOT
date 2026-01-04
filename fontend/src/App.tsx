@@ -19,6 +19,8 @@ import {
   Video,
   Maximize2,
   CheckCircle,
+  DoorOpen,
+  Loader2,
 } from "lucide-react"
 
 const API_BASE_URL = "http://localhost:8000/api"
@@ -55,6 +57,7 @@ const App = () => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
   const [liveStream, setLiveStream] = useState<string | null>(null)
   const [isStreamActive, setIsStreamActive] = useState(false)
+  const [doorLoading, setDoorLoading] = useState(false)
 
   const wsRef = useRef<WebSocket | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -79,7 +82,7 @@ const App = () => {
 
   const playAlertSound = () => {
     if (audioRef.current && notificationsEnabled) {
-      audioRef.current.play().catch(() => {})
+      audioRef.current.play().catch(() => { })
     }
   }
 
@@ -87,7 +90,7 @@ const App = () => {
     if (!notificationsEnabled) return
 
     const notification: Notification = {
-       ...(detection as Detection),
+      ...(detection as Detection),
       id: "10",
       read: false,
     }
@@ -147,7 +150,9 @@ const App = () => {
       setLoading(true)
       const data = await apiCall(`/events?limit=50&alert_only=${alertsOnly}`)
       setEvents(data)
-
+      if(alertsOnly === true){
+        setEvents(events.filter(event => event.alert === true))
+      }
       const total = data.length
       const alerts = data.filter((e: Detection) => e.alert).length
       const today = data.filter((e: Detection) => {
@@ -196,48 +201,48 @@ const App = () => {
   //     setLoading(false)
   //   }
   // }
-const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-  const file = event.target.files?.[0];
-  if (!file) return;
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
 
-  console.log("Uploading file:", {
-    name: file.name,
-    type: file.type,
-    size: file.size,
-  });
-
-  const formData = new FormData();
-  formData.append("file", file);
-
-  try {
-    setLoading(true);
-
-    // Gọi API detect mà KHÔNG set Content-Type
-    const data = await apiCall("/detect", {
-      method: "POST",
-      body: formData,
-      headers: { Authorization: `Bearer ${MOCK_TOKEN}` }, 
+    console.log("Uploading file:", {
+      name: file.name,
+      type: file.type,
+      size: file.size,
     });
 
-    console.log("Server response:", data);
+    const formData = new FormData();
+    formData.append("file", file);
 
-    if (data.detections?.length >= 0) {
-      alert(`Tìm thấy ${data.detections.length} người`);
-    } else {
-      alert("Detection returned no data");
+    try {
+      setLoading(true);
+
+      // Gọi API detect mà KHÔNG set Content-Type
+      const data = await apiCall("/detect", {
+        method: "POST",
+        body: formData,
+        headers: { Authorization: `Bearer ${MOCK_TOKEN}` },
+      });
+
+      console.log("Server response:", data);
+
+      if (data.detections?.length >= 0) {
+        alert(`Tìm thấy ${data.detections.length} người`);
+      } else {
+        alert("Detection returned no data");
+      }
+
+      // Cập nhật danh sách sự kiện
+      fetchEvents();
+    } catch (error) {
+      console.error("Detection failed:", error);
+      alert("Detection failed: " + (error as Error).message);
+    } finally {
+      setLoading(false);
+      // Reset input để có thể upload lại cùng file nếu muốn
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
-
-    // Cập nhật danh sách sự kiện
-    fetchEvents();
-  } catch (error) {
-    console.error("Detection failed:", error);
-    alert("Detection failed: " + (error as Error).message);
-  } finally {
-    setLoading(false);
-    // Reset input để có thể upload lại cùng file nếu muốn
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  }
-};
+  };
 
   const handleCreateROI = async () => {
     const roiData = {
@@ -289,6 +294,30 @@ const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => 
     }
   }
 
+  // Hàm mở cửa
+  const handleOpenDoor = async () => {
+    if (doorLoading) return;
+
+    try {
+      setDoorLoading(true);
+      const data = await apiCall("/door/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (data.success) {
+        alert("🚪 " + data.message);
+      } else {
+        alert("❌ Không thể mở cửa");
+      }
+    } catch (error) {
+      console.error("Open door failed:", error);
+      alert("❌ Lỗi: " + (error as Error).message);
+    } finally {
+      setDoorLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchEvents()
     fetchROIs()
@@ -298,10 +327,10 @@ const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => 
     <div className="space-y-6">
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={<Activity className="w-6 h-6" />} title="Total Events" value={stats.total} color="blue" />
-        <StatCard icon={<AlertCircle className="w-6 h-6" />} title="Alerts" value={stats.alerts} color="red" />
-        <StatCard icon={<Users className="w-6 h-6" />} title="Known Persons" value={stats.known} color="green" />
-        <StatCard icon={<Clock className="w-6 h-6" />} title="Today" value={stats.today} color="purple" />
+        <StatCard icon={<Activity className="w-6 h-6" />} title="Tổng sự kiện " value={stats.total} color="blue" />
+        <StatCard icon={<AlertCircle className="w-6 h-6" />} title="Cảnh báo " value={stats.alerts} color="red" />
+        <StatCard icon={<Users className="w-6 h-6" />} title="Bình thường" value={stats.known} color="green" />
+        {/* <StatCard icon={<Clock className="w-6 h-6" />} title="Today" value={stats.today} color="purple" /> */}
       </div>
 
       {/* Main Content Grid */}
@@ -312,13 +341,13 @@ const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => 
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
                 <Video className="w-5 h-5 text-blue-400" />
-                Live Camera Feed
+                 Cam  
               </h2>
               <div className="flex items-center gap-3">
                 {isStreamActive ? (
                   <>
                     <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                    <span className="text-sm text-red-400 font-medium">LIVE</span>
+                    <span className="text-sm text-red-400 font-medium">Trực tiếp </span>
                   </>
                 ) : (
                   <>
@@ -357,8 +386,7 @@ const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => 
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-slate-500">
                   <Camera className="w-16 h-16 mb-3 opacity-50" />
-                  <p className="text-lg">Waiting for camera feed...</p>
-                  <p className="text-sm mt-2">Connect your device to start streaming</p>
+                  <p className="text-lg">...</p>
                 </div>
               )}
             </div>
@@ -393,22 +421,21 @@ const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => 
           <div className="bg-slate-800 rounded-xl shadow-lg p-6 border border-slate-700">
             <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
               <Bell className="w-5 h-5 text-blue-400" />
-              Recent Activity
+                Thông báo vừa qua 
             </h2>
 
             {liveDetections.length === 0 ? (
               <div className="text-center py-8 text-slate-400">
                 <AlertCircle className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">No recent activity</p>
+                <p className="text-sm">Chưa có </p>
               </div>
             ) : (
               <div className="space-y-3 max-h-64 overflow-y-auto">
                 {liveDetections.map((detection, idx) => (
                   <div
                     key={idx}
-                    className={`border-l-4 p-3 rounded-lg cursor-pointer hover:bg-slate-700/50 transition-colors ${
-                      detection.alert ? "border-red-500 bg-red-950/20" : "border-green-500 bg-green-950/20"
-                    }`}
+                    className={`border-l-4 p-3 rounded-lg cursor-pointer hover:bg-slate-700/50 transition-colors ${detection.alert ? "border-red-500 bg-red-950/20" : "border-green-500 bg-green-950/20"
+                      }`}
                     onClick={() => detection.image_url && setSelectedImage(detection.image_url)}
                   >
                     <div className="flex justify-between items-start mb-1">
@@ -426,11 +453,42 @@ const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => 
             )}
           </div>
 
+          {/* Door Control Section */}
+          <div className="bg-slate-800 rounded-xl shadow-lg p-6 border border-slate-700">
+            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+              <DoorOpen className="w-5 h-5 text-green-400" />
+              Điều khiển cửa
+            </h2>
+            <div className="space-y-4">
+              
+              <button
+                onClick={handleOpenDoor}
+                disabled={doorLoading}
+                className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:from-gray-600 disabled:to-gray-600 text-white py-4 rounded-xl font-bold text-lg shadow-lg shadow-green-500/25 transition-all duration-300 flex items-center justify-center gap-3 disabled:opacity-50"
+              >
+                {doorLoading ? (
+                  <>
+                    <Loader2 className="w-6 h-6 animate-spin" />
+                    Đang gửi lệnh...
+                  </>
+                ) : (
+                  <>
+                    <DoorOpen className="w-6 h-6" />
+                    🔓 Mở cửa
+                  </>
+                )}
+              </button>
+              <p className="text-xs text-slate-500 text-center">
+                Cửa sẽ tự động đóng sau 4 giây
+              </p>
+            </div>
+          </div>
+
           {/* Upload Section */}
           <div className="bg-slate-800 rounded-xl shadow-lg p-6 border border-slate-700">
             <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
               <Upload className="w-5 h-5 text-blue-400" />
-              Test Detection
+              Kiểm tra phát hiện 
             </h2>
             <div
               className="border-2 border-dashed border-slate-600 rounded-lg p-6 text-center hover:border-blue-400 transition-colors cursor-pointer"
@@ -442,9 +500,9 @@ const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => 
                 disabled={loading}
                 className="bg-blue-600! hover:bg-blue-700! text-white px-4 py-2 rounded-lg font-medium disabled:opacity-50 transition-colors text-sm"
               >
-                {loading ? "Processing..." : "Upload Image"}
+                {loading ? "Đang xử lý..." : "Tải ảnh lên"}
               </button>
-              <p className="text-xs text-slate-400 mt-2">JPG, PNG (max 10MB)</p>
+              <p className="text-xs text-slate-400 mt-2">JPG, PNG (tối đa 10MB)</p>
             </div>
           </div>
         </div>
@@ -455,23 +513,23 @@ const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => 
   const EventsView = () => (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Detection History</h2>
+        <h2 className="text-2xl text-white font-bold">Lịch sử </h2>
         <div className="flex items-center gap-4">
           <label className="flex items-center gap-2 cursor-pointer  text-white">
             <input
               type="checkbox"
               checked={alertsOnly}
-              onChange={(e) => setAlertsOnly(e.target.checked)}
+              onChange={(e) => {setAlertsOnly(e.target.checked)}}
               className="w-4 h-4 text-red-600 rounded"
             />
-            <span className="text-sm ">Alerts Only</span>
+            <span className="text-sm ">Chỉ cảnh báo </span>
           </label>
           <button
             onClick={fetchEvents}
             disabled={loading}
             className="bg-blue-600! hover:bg-blue-700! text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
           >
-            Refresh
+            Làm mới 
           </button>
         </div>
       </div>
@@ -525,9 +583,8 @@ const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => 
                 <div>
                   <h3 className="font-bold text-lg text-white">{roi.roi.name}</h3>
                   <span
-                    className={`text-xs px-2 py-1 rounded-full ${
-                      roi.active ? "bg-green-900/50 text-green-400" : "bg-slate-700 text-slate-400"
-                    }`}
+                    className={`text-xs px-2 py-1 rounded-full ${roi.active ? "bg-green-900/50 text-green-400" : "bg-slate-700 text-slate-400"
+                      }`}
                   >
                     {roi.active ? "Active" : "Inactive"}
                   </span>
@@ -595,14 +652,12 @@ const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => 
               className="sr-only"
             />
             <div
-              className={`w-14 h-8 rounded-full transition-colors ${
-                notificationsEnabled ? "bg-blue-600" : "bg-slate-600"
-              }`}
+              className={`w-14 h-8 rounded-full transition-colors ${notificationsEnabled ? "bg-blue-600" : "bg-slate-600"
+                }`}
             >
               <div
-                className={`w-6 h-6 bg-white rounded-full shadow-md transform transition-transform duration-200 ease-in-out mt-1 ${
-                  notificationsEnabled ? "translate-x-7" : "translate-x-1"
-                }`}
+                className={`w-6 h-6 bg-white rounded-full shadow-md transform transition-transform duration-200 ease-in-out mt-1 ${notificationsEnabled ? "translate-x-7" : "translate-x-1"
+                  }`}
               ></div>
             </div>
           </div>
@@ -636,7 +691,7 @@ const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => 
   )
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-slate-900 via-slate-800 to-slate-900">
+    <div className="min-h-screen min-w-screen bg-linear-to-br from-slate-900 via-slate-800 to-slate-900">
       {/* Alert Sound */}
       <audio
         ref={audioRef}
@@ -675,26 +730,11 @@ const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => 
                 <Camera className="w-6 h-6 text-white" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">Smart Home Security</h1>
-                <p className="text-sm text-slate-400">Intrusion Detection System</p>
+                <h1 className="text-2xl font-bold text-white">Hệ thống phát hiện đột nhập </h1>
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <button
-                onClick={() => setNotificationsEnabled(!notificationsEnabled)}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                  notificationsEnabled
-                    ? "bg-blue-600! hover:bg-blue-700 text-white"
-                    : "bg-slate-700! hover:bg-slate-600 text-slate-300"
-                }`}
-              >
-                {notificationsEnabled ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
-                <span className="text-sm font-medium">{notificationsEnabled ? "Alerts On" : "Alerts Off"}</span>
-              </button>
-              <div className="flex items-center gap-2 bg-green-900/40 px-3 py-2 rounded-lg border border-green-500/50">
-                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-lg shadow-green-500/50"></div>
-                <span className="text-sm font-medium text-green-400">System Active</span>
-              </div>
+              
             </div>
           </div>
         </div>
@@ -706,29 +746,29 @@ const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => 
           <div className="flex gap-8">
             <NavTab
               icon={<Activity className="w-4 h-4" />}
-              label="Dashboard"
+              label="Màn hình chính"
               active={activeTab === "dashboard"}
               onClick={() => setActiveTab("dashboard")}
             />
             <NavTab
               icon={<Bell className="w-4 h-4" />}
-              label="Events"
+              label="Sự kiện "
               active={activeTab === "events"}
               onClick={() => setActiveTab("events")}
-              badge={stats.alerts}
+              // badge={stats.alerts}
             />
-            <NavTab
+            {/* <NavTab
               icon={<MapPin className="w-4 h-4" />}
               label="ROI"
               active={activeTab === "roi"}
               onClick={() => setActiveTab("roi")}
-            />
-            <NavTab
+            /> */}
+            {/* <NavTab
               icon={<Settings className="w-4 h-4" />}
               label="Settings"
               active={activeTab === "settings"}
               onClick={() => setActiveTab("settings")}
-            />
+            /> */}
           </div>
         </div>
       </nav>
@@ -770,11 +810,10 @@ const StatCard = ({ icon, title, value, color }: any) => {
 const NavTab = ({ icon, label, active, onClick, badge }: any) => (
   <button
     onClick={onClick}
-    className={`flex items-center gap-2 px-1 py-4 border-b-2 font-medium text-sm transition-all relative ${
-      active
+    className={`flex items-center gap-2 px-1 py-4 border-b-2 font-medium text-sm transition-all relative ${active
         ? "border-blue-500 text-blue-400"
         : "border-transparent! text-slate-400! hover:text-red-300! hover:border-slate-600!"
-    }`}
+      }`}
   >
     {icon}
     {label}
@@ -789,9 +828,8 @@ const NavTab = ({ icon, label, active, onClick, badge }: any) => (
 // Component: Event Card
 const EventCard = ({ event, onViewImage, onDownload }: any) => (
   <div
-    className={`bg-slate-800 rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border-l-4 border-slate-700 ${
-      event.alert ? "border-l-red-500" : "border-l-green-500"
-    }`}
+    className={`bg-slate-800 rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border-l-4 border-slate-700 ${event.alert ? "border-l-red-500" : "border-l-green-500"
+      }`}
   >
     {event.image_url && (
       <div className="relative aspect-video bg-black group cursor-pointer" onClick={() => onViewImage(event.image_url)}>
@@ -837,9 +875,8 @@ const EventCard = ({ event, onViewImage, onDownload }: any) => (
         {event.detections?.slice(0, 2).map((det: any, idx: number) => (
           <span
             key={idx}
-            className={`text-xs px-3 py-1 rounded-full font-medium ${
-              det.alert ? "bg-red-900/50 text-red-300" : "bg-green-900/50 text-green-300"
-            }`}
+            className={`text-xs px-3 py-1 rounded-full font-medium ${det.alert ? "bg-red-900/50 text-red-300" : "bg-green-900/50 text-green-300"
+              }`}
           >
             {det.face_id} ({(det.confidence * 100).toFixed(0)}%)
           </span>
@@ -852,9 +889,8 @@ const EventCard = ({ event, onViewImage, onDownload }: any) => (
 // Component: Notification Toast
 const NotificationToast = ({ notification, onClose, onView }: any) => (
   <div
-    className={`animate-slide-in-right bg-slate-800 rounded-lg shadow-2xl border-l-4 overflow-hidden max-w-sm border-slate-700 ${
-      notification.alert ? "border-l-red-500" : "border-l-green-500"
-    } ${notification.read ? "opacity-75" : ""}`}
+    className={`animate-slide-in-right bg-slate-800 rounded-lg shadow-2xl border-l-4 overflow-hidden max-w-sm border-slate-700 ${notification.alert ? "border-l-red-500" : "border-l-green-500"
+      } ${notification.read ? "opacity-75" : ""}`}
   >
     <div className="p-4">
       <div className="flex items-start justify-between mb-2">
@@ -893,9 +929,8 @@ const NotificationToast = ({ notification, onClose, onView }: any) => (
 
       <button
         onClick={onView}
-        className={`w-full py-2 rounded-lg font-medium text-sm transition-colors ${
-          notification.alert ? "bg-red-600! hover:bg-red-700! text-white" : "bg-green-600! hover:bg-green-700! text-white"
-        }`}
+        className={`w-full py-2 rounded-lg font-medium text-sm transition-colors ${notification.alert ? "bg-red-600! hover:bg-red-700! text-white" : "bg-green-600! hover:bg-green-700! text-white"
+          }`}
       >
         View Details
       </button>
