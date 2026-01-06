@@ -12,7 +12,11 @@ const char* ssid = "TT";
 const char* password = "123456788";
 
 // ==================== FASTAPI DETECT ====================
-String FASTAPI_URL = "http://192.168.39.224:8000/api/detect";
+// LOCAL
+// String FASTAPI_URL = "http://192.168.164.224:8000/api/detect";
+
+// Deploy 
+String FASTAPI_URL = "https://iot-backend-507089269932.asia-southeast1.run.app/api/detect";
 String JWT_TOKEN = "test_token";
 
 // ==================== FIREBASE REALTIME DATABASE ====================
@@ -46,16 +50,17 @@ const char* FIREBASE_STREAM_PATH = "/door_command.json";
 
 // ==================== CONFIG ====================
 const unsigned long MOTION_TIMEOUT = 10000;
-const int MAX_FRAMES = 3;
-const unsigned long UPLOAD_DELAY = 1000;
+const unsigned long UPLOAD_DELAY = 1000;  
 int frameIndex = 0;
 bool alarmActive = false;
 bool personPresent = false;
 bool alarmSuppressed = false;
+bool knownPersonDetected = false;  // TRUE khi nhận diện được chủ nhà
+bool captureActive = false;        // TRUE khi đang trong quá trình chụp
 unsigned long lastMotionTime = 0;
 unsigned long lastUploadTime = 0;
 unsigned long lastDebugLogTime = 0;
-const unsigned long DEBUG_LOG_INTERVAL = 3000;  // In log debug mỗi 3 giây
+const unsigned long DEBUG_LOG_INTERVAL = 1000;  // In log debug mỗi 1 giây
 bool pirWasLow = true;  // Yêu cầu PIR phải về LOW trước khi phát hiện chuyển động mới
 
 // ==================== FIREBASE STREAM ====================
@@ -220,19 +225,44 @@ void processDetectResult(String apiResponse) {
     return;
   }
 
+  // Kiểm tra image_url
+  const char* imageUrl = doc["image_url"];
+  if (imageUrl == nullptr) {
+    Serial.println("⚠️ image_url = null → Ảnh không được lưu trên server");
+    Serial.println("   (Có thể do không phát hiện người hoặc lỗi upload ảnh)");
+  } else {
+    Serial.print("🖼️ Image saved: ");
+    Serial.println(imageUrl);
+  }
+
   bool alert = doc["alert"] | false;
   bool openSig = doc["open"] | false;
-
-  if (alert) {
-    if (!alarmActive && !alarmSuppressed) {
-      Serial.println("🚨 ALERT → START ALARM");
-      startAlarm();
+  
+  // Kiểm tra detections array để xác định có người không
+  JsonArray detections = doc["detections"];
+  bool hasDetection = detections.size() > 0;
+  
+  if (hasDetection) {
+    // Có phát hiện người trong ảnh
+    if (alert) {
+      // Người LẠ (unknown) → Bật alarm, tiếp tục chụp
+      Serial.println("🚨 NGƯỜI LẠ PHÁT HIỆN → Tiếp tục chụp & bật alarm");
+      if (!alarmActive && !alarmSuppressed) {
+        startAlarm();
+      }
+      knownPersonDetected = false;
+    } else {
+      // CHỦ NHÀ (known) → Dừng chụp, tắt alarm
+      Serial.println("✅ CHỦ NHÀ được nhận diện → Dừng chụp");
+      knownPersonDetected = true;
+      captureActive = false;  // Dừng chụp
+      if (alarmActive) {
+        stopAlarm();
+      }
     }
   } else {
-    if (alarmActive) {
-      Serial.println("ℹ️ NO ALERT → STOP ALARM");
-      stopAlarm();
-    }
+    // Không phát hiện được người trong ảnh (YOLO không detect)
+    Serial.println("⚠️ Không phát hiện người → Tiếp tục chụp");
   }
 
   if (openSig) {
@@ -240,6 +270,8 @@ void processDetectResult(String apiResponse) {
     stopAlarm();
     openDoor();
     alarmSuppressed = true;
+    knownPersonDetected = true;  // Coi như đã xác nhận chủ nhà
+    captureActive = false;
   }
 }
 
@@ -253,11 +285,6 @@ bool checkMotion() {
   if (!motion) {
     pirWasLow = true;
   }
-
-  // Chỉ phát hiện chuyển động MỚI khi:
-  // 1. PIR đang HIGH (có chuyển động)
-  // 2. pirWasLow = true (PIR đã từng về LOW trước đó)
-  // 3. personPresent = false (chưa có người)
   if (motion && pirWasLow) {
     lastMotionTime = millis();
     if (!personPresent) {
@@ -275,12 +302,17 @@ bool checkMotion() {
 
   if (personPresent && (millis() - lastMotionTime > MOTION_TIMEOUT)) {
     personPresent = false;
-    Serial.println("👋 Person left (timeout)");
+    Serial.println("👋 Hết chuyển động (timeout 10s)");
+    Serial.printf("   📊 Tổng số frame đã gửi: %d\n", frameIndex);
     
-    // Tự động tắt alarm khi hết chuyển động
+    // Reset tất cả trạng thái
     stopAlarm();
-    alarmSuppressed = false;  // Reset để lần sau có thể báo động lại
-    // pirWasLow vẫn giữ nguyên - phải đợi PIR về LOW trước khi detect lại
+    alarmSuppressed = false;
+    knownPersonDetected = false;
+    captureActive = false;
+    frameIndex = 0;
+    
+    Serial.println("   🔄 Đã reset trạng thái, sẵn sàng phát hiện mới");
   }
 
   return false;
@@ -468,28 +500,34 @@ void loop() {
   handleFirebaseStream();
 
   if (checkMotion()) {
+    // Phát hiện chuyển động MỚI
     frameIndex = 0;
     alarmSuppressed = false;
-    lastUploadTime = millis() - UPLOAD_DELAY;
+    knownPersonDetected = false;
+    captureActive = true;  // Bắt đầu chụp
+    lastUploadTime = millis() - UPLOAD_DELAY;  // Chụp ngay lập tức
+    Serial.println("📷 Bắt đầu chụp liên tục...");
   }
 
-  if (personPresent && frameIndex < MAX_FRAMES) {
+  // Chụp liên tục nếu: có người + đang capture + chưa nhận diện được chủ nhà
+  if (personPresent && captureActive && !knownPersonDetected) {
     if (millis() - lastUploadTime >= UPLOAD_DELAY) {
-      uploadFrame();
       frameIndex++;
+      Serial.printf("📸 Chụp frame #%d...\n", frameIndex);
+      uploadFrame();
       lastUploadTime = millis();
-      Serial.printf("📸 Sent frame %d/%d\n", frameIndex, MAX_FRAMES);
     }
   }
 
-  // Debug log - hiển thị trạng thái hệ thống mỗi 3 giây
+  // Debug log - hiển thị trạng thái hệ thống
   if (millis() - lastDebugLogTime >= DEBUG_LOG_INTERVAL) {
     lastDebugLogTime = millis();
     if (personPresent) {
       unsigned long timeRemaining = MOTION_TIMEOUT - (millis() - lastMotionTime);
-      Serial.printf("⏳ Status: personPresent=%s, frameIndex=%d/%d, alarm=%s, timeout in %.1fs\n",
-                    personPresent ? "true" : "false",
-                    frameIndex, MAX_FRAMES,
+      Serial.printf("⏳ Status: capture=%s, knownPerson=%s, frames=%d, alarm=%s, timeout=%.1fs\n",
+                    captureActive ? "ON" : "OFF",
+                    knownPersonDetected ? "YES" : "NO",
+                    frameIndex,
                     alarmActive ? "ON" : "OFF",
                     timeRemaining / 1000.0);
     }
